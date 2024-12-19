@@ -1,64 +1,163 @@
+'''
+-----------------------------------------------------------------------
+File: utils.py
+Creation Time: Dec 6th 2023, 7:09 pm
+Author: Saurabh Zinjad
+Developer Email: zinjadsaurabh1997@gmail.com
+Copyright (c) 2023 Saurabh Zinjad. All rights reserved | GitHub: Ztrimus
+-----------------------------------------------------------------------
+'''
+
 import os
-import jinja2
-from zlm.utils.utils import write_file, save_latex_as_pdf
+import re
+import time
+import json
+import base64
+import platform
+import subprocess
+import streamlit as st
+import streamlit.components.v1 as components
+from pdf2image import convert_from_path
+from pathlib import Path
+from datetime import datetime
+from langchain_core.output_parsers import JsonOutputParser
 
-def escape_for_latex(data):
-    if isinstance(data, dict):
-        return {key: escape_for_latex(value) for key, value in data.items()}
-    elif isinstance(data, list):
-        return [escape_for_latex(item) for item in data]
-    elif isinstance(data, str):
-        latex_special_chars = {
-            "&": r"\&",
-            "%": r"\%",
-            "$": r"\$",
-            "#": r"\#",
-            "_": r"\_",
-            "{": r"\{",
-            "}": r"\}",
-            "~": r"\textasciitilde{}",
-            "^": r"\^{}",
-            "\\": r"\textbackslash{}",
-            "\n": "\\newline%\n",
-            "-": r"{-}",
-            "\xA0": "~",
-            "[": r"{[}",
-            "]": r"{]}",
-        }
-        return "".join([latex_special_chars.get(c, c) for c in data])
-    return data
+OS_SYSTEM = platform.system().lower()
 
-def latex_to_pdf(json_resume, dst_path):
+def write_file(file_path, data):
+    with open(file_path, "w") as file:
+        file.write(data)
+
+def read_file(file_path, mode="r"):
+    with open(file_path, mode) as file:
+        return file.read()
+
+def write_json(file_path, data):
+    with open(file_path, "w") as json_file:
+        json.dump(data, json_file, indent=2)
+
+def read_json(file_path: str):
+    with open(file_path) as json_file:
+        return json.load(json_file)
+
+def job_doc_name(job_details: dict, output_dir: str = "output", type: str = ""):
+    company_name = clean_string(job_details["company_name"])
+    job_title = clean_string(job_details["job_title"])[:15]
+    doc_name = "_".join([company_name, job_title])
+    doc_dir = os.path.join(output_dir, company_name)
+    os.makedirs(doc_dir, exist_ok=True)
+
+    if type == "jd":
+        return os.path.join(doc_dir, f"{doc_name}_JD.json")
+    elif type == "resume":
+        return os.path.join(doc_dir, f"{doc_name}_resume.json")
+    elif type == "cv":
+        return os.path.join(doc_dir, f"{doc_name}_cv.txt")
+    else:
+        return os.path.join(doc_dir, f"{doc_name}_")
+
+def clean_string(text: str):
+    text = text.title().replace(" ", "").strip()
+    text = re.sub(r"[^a-zA-Z0-9]+", "", text)
+    return text
+
+def open_file(file: str):
+    if OS_SYSTEM == "darwin":  # macOS
+        os.system(f"open {file}")
+    elif OS_SYSTEM == "linux":
+        os.system(f"xdg-open {file}")
+    elif OS_SYSTEM == "windows":
+        os.startfile(file)
+    else:
+        os.system(f"xdg-open {file}")
+
+def save_log(content: any, file_name: str):
+    timestamp = int(datetime.timestamp(datetime.now()))
+    file_path = f"logs/{file_name}_{timestamp}.txt"
+    write_file(file_path, content)
+
+def measure_execution_time(func):
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(f"Function {func.__name__} took {execution_time:.4f} seconds to execute")
+        return result
+    return wrapper
+
+def display_pdf(file, type="pdf"):
+    if type == "image":
+        pages = convert_from_path(file)
+        for page in pages:
+            st.image(page, use_column_width=True)
+    elif type == "pdf":
+        bytes_data = read_file(file, "rb")
+        base64_pdf = base64.b64encode(bytes_data).decode("utf-8")
+        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="700px"></iframe>'
+        st.markdown(pdf_display, unsafe_allow_html=True)
+
+def save_latex_as_pdf(tex_file_path: str, dst_path: str):
     try:
-        # Set up Jinja2 environment
-        module_dir = os.path.dirname(__file__)
-        templates_path = os.path.join(os.path.dirname(module_dir), "templates")
-        latex_jinja_env = jinja2.Environment(
-            block_start_string="\BLOCK{",
-            block_end_string="}",
-            variable_start_string="\VAR{",
-            variable_end_string="}",
-            comment_start_string="\#{",
-            comment_end_string="}",
-            trim_blocks=True,
-            autoescape=False,
-            loader=jinja2.FileSystemLoader(templates_path),
-        )
+        prev_dir = os.getcwd()
+        pdf_dir = os.path.dirname(tex_file_path)
+        os.chdir(pdf_dir)
 
-        # Escape JSON data for LaTeX
-        escaped_json_resume = escape_for_latex(json_resume)
+        # Use pdflatex instead of tectonic
+        cmd = ["pdflatex", "-interaction=nonstopmode", tex_file_path]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 
-        # Render LaTeX template
-        resume_template = latex_jinja_env.get_template("resume.tex.jinja")
-        resume_latex = resume_template.render(escaped_json_resume)
+        os.chdir(prev_dir)
 
-        # Write the rendered LaTeX to a temporary file
-        tex_file_path = dst_path.replace(".pdf", ".tex")
-        write_file(tex_file_path, resume_latex)
+        # Move resulting PDF to the destination path
+        pdf_path = tex_file_path.replace(".tex", ".pdf")
+        os.rename(pdf_path, dst_path)
 
-        # Convert LaTeX to PDF
-        save_latex_as_pdf(tex_file_path, dst_path)
-        return resume_latex
-    except Exception as e:
-        print(f"Error in latex_to_pdf: {e}")
+        # Cleanup auxiliary files generated by pdflatex
+        aux_files = [f for f in os.listdir(pdf_dir) if f.endswith(('.aux', '.log', '.out'))]
+        for aux_file in aux_files:
+            os.remove(os.path.join(pdf_dir, aux_file))
+
+    except subprocess.CalledProcessError as e:
+        print("Error running pdflatex:", e.stderr.decode("utf-8"))
+        os.chdir(prev_dir)
         raise
+    except Exception as e:
+        print(f"Error during LaTeX to PDF conversion: {e}")
+        os.chdir(prev_dir)
+        raise
+
+def get_default_download_folder():
+    download_folder_path = os.path.join(str(Path.home()), "Downloads", "JobLLM_Resume_CV")
+    os.makedirs(download_folder_path, exist_ok=True)
+    return download_folder_path
+
+def parse_json_markdown(json_string: str) -> dict:
+    try:
+        if json_string.startswith("```json"):
+            json_string = json_string[7:-3]
+        parser = JsonOutputParser()
+        return parser.parse(json_string)
+    except Exception as e:
+        print(e)
+        return {}
+
+def get_prompt(system_prompt_path: str) -> str:
+    with open(system_prompt_path, encoding="utf-8") as file:
+        return file.read().strip() + "\n"
+
+def key_value_chunking(data, prefix=""):
+    chunks = []
+    stop_needed = lambda value: '.' if not isinstance(value, (str, int, float, bool, list)) else ''
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if value is not None:
+                chunks.extend(key_value_chunking(value, prefix=f"{prefix}{key}{stop_needed(value)}"))
+    elif isinstance(data, list):
+        for index, value in enumerate(data):
+            if value is not None:
+                chunks.extend(key_value_chunking(value, prefix=f"{prefix}_{index}{stop_needed(value)}"))
+    else:
+        if data is not None:
+            chunks.append(f"{prefix}: {data}")
+    return chunks
