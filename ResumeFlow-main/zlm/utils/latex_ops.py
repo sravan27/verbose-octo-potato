@@ -1,13 +1,3 @@
-'''
------------------------------------------------------------------------
-File: latex_ops.py
-Creation Time: Nov 24th 2023 3:29 am
-Author: Saurabh Zinjad
-Developer Email: zinjadsaurabh1997@gmail.com
-Copyright (c) 2023
------------------------------------------------------------------------
-'''
-
 import os
 import jinja2
 import streamlit as st
